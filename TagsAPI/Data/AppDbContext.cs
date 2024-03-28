@@ -12,8 +12,7 @@ namespace TagsAPI.Data
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Entity<Tag>()
-                .HasKey(t => t.Id); // Definicja klucza głównego
+            modelBuilder.Entity<Tag>().HasKey(t => t.Id);
         }
     }
 }

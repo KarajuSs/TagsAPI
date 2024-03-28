@@ -1,8 +1,13 @@
-﻿namespace TagsAPI.Model
+﻿using System.ComponentModel.DataAnnotations.Schema;
+using System.ComponentModel.DataAnnotations;
+
+namespace TagsAPI.Model
 {
     public class Tag
     {
-        public int? Id { get; set; } // Klucz główny
+        [Key]
+        [DatabaseGenerated(DatabaseGeneratedOption.Identity)] // Autoinkrementacja
+        public int Id { get; set; } // Klucz główny
         public string Name { get; set; }
         public int Count { get; set; }
     }
