@@ -10,10 +10,12 @@ using System.Linq.Expressions;
 [Route("[controller]")]
 public class TagsController : ControllerBase
 {
+    private readonly ILogger<TagsController> _logger;
     private readonly AppDbContext _context;
 
-    public TagsController(AppDbContext context)
+    public TagsController(ILogger<TagsController> logger, AppDbContext context)
     {
+        _logger = logger;
         _context = context;
     }
 
@@ -23,41 +25,77 @@ public class TagsController : ControllerBase
     {
         try
         {
+            _logger.LogInformation("Started fetching tags from StackOverflow API.");
+
             var httpClient = new HttpClient();
-            var response = await httpClient.GetAsync("https://api.stackexchange.com/2.3/tags?order=desc&min=1000&sort=popular&site=stackoverflow");
+            var allTags = new List<Tag>();
+            var pageNumber = 1;
+            var pageSize = 100; // Zmiana rozmiaru strony na 100, aby przyspieszyć pobieranie wszystkich tagów
 
-            if (!response.IsSuccessStatusCode)
+            while (allTags.Count < 1000)
             {
-                return StatusCode((int)response.StatusCode);
-            }
+                var response = await httpClient.GetAsync($"https://api.stackexchange.com/2.3/tags?page={pageNumber}&pagesize={pageSize}&order=desc&sort=popular&site=stackoverflow");
 
-            // Sprawdź, czy odpowiedź jest skompresowana
-            if (response.Content.Headers.ContentEncoding.Any(x => x.ToLower() == "gzip"))
-            {
-                // Jeśli odpowiedź jest skompresowana w formacie GZip, dekompresuj ją
-                using (var stream = await response.Content.ReadAsStreamAsync())
-                using (var gzipStream = new GZipStream(stream, CompressionMode.Decompress))
-                using (var reader = new StreamReader(gzipStream))
+                if (!response.IsSuccessStatusCode)
                 {
-                    var content = await reader.ReadToEndAsync();
-                    var tagsResponse = JsonConvert.DeserializeObject<TagsResponse>(content);
-                    await _context.Tags.AddRangeAsync(tagsResponse.Items);
-                    await _context.SaveChangesAsync();
+                    _logger.LogError($"Failed to fetch tags. Status code: {(int)response.StatusCode}");
+                    return StatusCode((int)response.StatusCode);
                 }
+
+                using (var stream = await response.Content.ReadAsStreamAsync())
+                {
+                    // Sprawdź, czy odpowiedź jest skompresowana w formacie GZip
+                    if (response.Content.Headers.ContentEncoding.Any(x => x.ToLower() == "gzip"))
+                    {
+                        using (var gzipStream = new GZipStream(stream, CompressionMode.Decompress))
+                        using (var reader = new StreamReader(gzipStream))
+                        {
+                            var content = await reader.ReadToEndAsync();
+                            var tagsResponse = JsonConvert.DeserializeObject<TagsResponse>(content);
+                            var tags = tagsResponse.Items;
+
+                            allTags.AddRange(tags);
+
+                            // Jeśli liczba pobranych tagów jest mniejsza niż oczekiwana, przerwij pętlę
+                            if (tags.Count < pageSize)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    else // Odpowiedź nie jest skompresowana
+                    {
+                        using (var reader = new StreamReader(stream))
+                        {
+                            var content = await reader.ReadToEndAsync();
+                            var tagsResponse = JsonConvert.DeserializeObject<TagsResponse>(content);
+                            var tags = tagsResponse.Items;
+
+                            allTags.AddRange(tags);
+
+                            // Jeśli liczba pobranych tagów jest mniejsza niż oczekiwana, przerwij pętlę
+                            if (tags.Count < pageSize)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                pageNumber++;
             }
-            else
-            {
-                // Jeśli odpowiedź nie jest skompresowana, odczytaj ją normalnie
-                var content = await response.Content.ReadAsStringAsync();
-                var tagsResponse = JsonConvert.DeserializeObject<TagsResponse>(content);
-                await _context.Tags.AddRangeAsync(tagsResponse.Items);
-                await _context.SaveChangesAsync();
-            }
+
+            // Zapisz pobrane tagi do bazy danych
+            await _context.Tags.AddRangeAsync(allTags);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation($"Fetched {allTags.Count} tags from StackOverflow API successfully.");
 
             return Ok("Tags fetched successfully.");
         }
         catch (Exception ex)
         {
+            _logger.LogError($"An error occurred while fetching tags: {ex.Message}");
             return StatusCode(500, $"An error occurred: {ex.Message}");
         }
     }
@@ -89,6 +127,9 @@ public class TagsController : ControllerBase
         {
             var query = _context.Tags.AsQueryable();
 
+            // Logowanie informacji o żądaniu
+            _logger.LogInformation($"Received request to get tags. PageNumber: {pageNumber}, PageSize: {pageSize}, SortBy: {sortBy}, SortOrder: {sortOrder}");
+
             // Sortowanie
             var parameter = Expression.Parameter(typeof(Tag), "x");
             var property = Expression.Property(parameter, sortBy);
@@ -106,6 +147,9 @@ public class TagsController : ControllerBase
         }
         catch (Exception ex)
         {
+            // Logowanie błędu
+            _logger.LogError($"An error occurred while processing the request: {ex}");
+
             return StatusCode(500, $"An error occurred: {ex.Message}");
         }
     }
