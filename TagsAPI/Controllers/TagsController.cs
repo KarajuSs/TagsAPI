@@ -1,10 +1,11 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
+using System.IO.Compression;
 using TagsAPI.Data;
 using TagsAPI.Model;
-using System.IO.Compression;
 using System.Linq.Expressions;
+using System.Net.Http;
 
 [ApiController]
 [Route("[controller]")]
@@ -12,11 +13,20 @@ public class TagsController : ControllerBase
 {
     private readonly ILogger<TagsController> _logger;
     private readonly AppDbContext _context;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     public TagsController(ILogger<TagsController> logger, AppDbContext context)
     {
         _logger = logger;
         _context = context;
+        _httpClientFactory = null;
+    }
+
+    public TagsController(ILogger<TagsController> logger, AppDbContext context, IHttpClientFactory httpClientFactory)
+    {
+        _logger = logger;
+        _context = context;
+        _httpClientFactory = httpClientFactory;
     }
 
     // Metoda do pobierania tagów z API StackOverflow
@@ -27,13 +37,13 @@ public class TagsController : ControllerBase
         {
             _logger.LogInformation("Started fetching tags from StackOverflow API.");
 
-            var httpClient = new HttpClient();
             var allTags = new List<Tag>();
             var pageNumber = 1;
-            var pageSize = 100; // Zmiana rozmiaru strony na 100, aby przyspieszyć pobieranie wszystkich tagów
+            var pageSize = 100;
 
             while (allTags.Count < 1000)
             {
+                var httpClient = _httpClientFactory.CreateClient();
                 var response = await httpClient.GetAsync($"https://api.stackexchange.com/2.3/tags?page={pageNumber}&pagesize={pageSize}&order=desc&sort=popular&site=stackoverflow");
 
                 if (!response.IsSuccessStatusCode)
@@ -44,7 +54,6 @@ public class TagsController : ControllerBase
 
                 using (var stream = await response.Content.ReadAsStreamAsync())
                 {
-                    // Sprawdź, czy odpowiedź jest skompresowana w formacie GZip
                     if (response.Content.Headers.ContentEncoding.Any(x => x.ToLower() == "gzip"))
                     {
                         using (var gzipStream = new GZipStream(stream, CompressionMode.Decompress))
@@ -56,14 +65,13 @@ public class TagsController : ControllerBase
 
                             allTags.AddRange(tags);
 
-                            // Jeśli liczba pobranych tagów jest mniejsza niż oczekiwana, przerwij pętlę
                             if (tags.Count < pageSize)
                             {
                                 break;
                             }
                         }
                     }
-                    else // Odpowiedź nie jest skompresowana
+                    else
                     {
                         using (var reader = new StreamReader(stream))
                         {
@@ -73,7 +81,6 @@ public class TagsController : ControllerBase
 
                             allTags.AddRange(tags);
 
-                            // Jeśli liczba pobranych tagów jest mniejsza niż oczekiwana, przerwij pętlę
                             if (tags.Count < pageSize)
                             {
                                 break;
@@ -85,7 +92,6 @@ public class TagsController : ControllerBase
                 pageNumber++;
             }
 
-            // Zapisz pobrane tagi do bazy danych
             await _context.Tags.AddRangeAsync(allTags);
             await _context.SaveChangesAsync();
 
