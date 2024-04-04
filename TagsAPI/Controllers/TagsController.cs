@@ -5,7 +5,6 @@ using System.IO.Compression;
 using TagsAPI.Data;
 using TagsAPI.Model;
 using System.Linq.Expressions;
-using System.Net.Http;
 
 [ApiController]
 [Route("[controller]")]
